@@ -1,5 +1,4 @@
-# Base image
-FROM nginx:latest
+FROM debian:12.5 as oqsprovider-builder
 
 # Define arguments
 ARG OPENSSL_INSTALL_DIR=/usr/local/ssl
@@ -7,12 +6,15 @@ ARG OPENSSL_VERSION=3.2.1
 ARG LIBOQS_VERSION=0.9.2
 ARG OQS_PROVIDER_VERSION=0.5.2
 
-# Install build dependencies for OpenSSL
+# Install build dependencies for OpenSSL and LibOQS
 RUN apt-get update && apt-get install -y \
     wget \
     build-essential \
     checkinstall \
-    zlib1g-dev
+    zlib1g-dev \
+    cmake \
+    gcc \
+    ninja-build
 
 # Download and unpack OpenSSL
 WORKDIR /usr/src
@@ -30,12 +32,7 @@ RUN cd /usr/src/openssl-${OPENSSL_VERSION} \
 RUN echo "${OPENSSL_INSTALL_DIR}/lib" > /etc/ld.so.conf.d/openssl-${OPENSSL_VERSION}.conf \
     && ldconfig -v
 
-# Update PATH to include the new OpenSSL binaries and set the LD_LIBRARY_PATH
-ENV PATH="${OPENSSL_INSTALL_DIR}/bin:${PATH}"
-ENV LD_LIBRARY_PATH="${OPENSSL_INSTALL_DIR}/lib"
-
 # Download and unpack OQS Provider
-WORKDIR /usr/src
 RUN wget https://github.com/open-quantum-safe/oqs-provider/archive/refs/tags/${OQS_PROVIDER_VERSION}.tar.gz \
     && tar -xf ${OQS_PROVIDER_VERSION}.tar.gz 
 
@@ -45,17 +42,29 @@ RUN cd oqs-provider-${OQS_PROVIDER_VERSION} \
     && tar -xf ${LIBOQS_VERSION}.tar.gz \
     && mv liboqs-${LIBOQS_VERSION} liboqs
 
-# Install build dependencies for LibOQS
-RUN apt-get update && apt-get install -y \
-    cmake \
-    gcc \
-    ninja-build
-
 # Install LibOQS and OQS Provider
 RUN cd oqs-provider-${OQS_PROVIDER_VERSION} \
     && OPENSSL_INSTALL=${OPENSSL_INSTALL_DIR} ./scripts/fullbuild.sh \
-    && cmake --install _build \
-    && cp _build/lib/oqsprovider.so ${OPENSSL_INSTALL_DIR}/lib/ossl-modules/
+    && cmake --install _build
+
+# Base image
+FROM nginx:latest
+
+# Define arguments
+ARG OPENSSL_INSTALL_DIR=/usr/local/ssl
+ARG OPENSSL_VERSION=3.2.1
+ARG OQS_PROVIDER_VERSION=0.5.2
+
+# Copy OpenSSL library files
+COPY --from=oqsprovider-builder ${OPENSSL_INSTALL_DIR} ${OPENSSL_INSTALL_DIR}
+
+# Configure dynamic linker run-time bindings
+RUN echo "${OPENSSL_INSTALL_DIR}/lib" > /etc/ld.so.conf.d/openssl-${OPENSSL_VERSION}.conf \
+    && ldconfig
+
+# Update PATH to include the new OpenSSL binaries and set the LD_LIBRARY_PATH
+ENV PATH="${OPENSSL_INSTALL_DIR}/bin:${PATH}"
+ENV LD_LIBRARY_PATH="${OPENSSL_INSTALL_DIR}/lib:${OPENSSL_INSTALL_DIR}/lib64"
 
 # Configure OpenSSL to use OQSProvider
 RUN cd ${OPENSSL_INSTALL_DIR} \ 
@@ -71,10 +80,3 @@ RUN cd ${OPENSSL_INSTALL_DIR} \
     && echo "system_default = system_default_sect" >> openssl.cnf \
     && echo "[system_default_sect]" >> openssl.cnf \
     && echo "Groups = x25519_kyber768:x25519" >> openssl.cnf
-
-# Cleanup build dependencies and directories
-RUN apt-get remove --purge -y build-essential checkinstall zlib1g-dev wget cmake gcc ninja-build \
-    && apt-get autoremove -y \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* /usr/src/openssl-* /usr/src/oqs-provider-* \
-    && rm /usr/src/*.tar.gz  
