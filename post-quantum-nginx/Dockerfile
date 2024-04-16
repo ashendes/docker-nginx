@@ -19,14 +19,16 @@ RUN apt-get update && apt-get install -y \
 # Download and unpack OpenSSL
 WORKDIR /usr/src
 RUN wget https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz \
-    && tar -xf openssl-${OPENSSL_VERSION}.tar.gz 
+    && tar -xf openssl-${OPENSSL_VERSION}.tar.gz \
+    && rm openssl-${OPENSSL_VERSION}.tar.gz
 
 # Configure, compile, and install OpenSSL
 RUN cd /usr/src/openssl-${OPENSSL_VERSION} \
     && ./config --prefix=${OPENSSL_INSTALL_DIR} --openssldir=${OPENSSL_INSTALL_DIR} shared zlib \
     && make \
     && make test \
-    && make install
+    && make install \
+    && rm -rf /usr/src/openssl-${OPENSSL_VERSION}
 
 # Configure dynamic linker run-time bindings
 RUN echo "${OPENSSL_INSTALL_DIR}/lib" > /etc/ld.so.conf.d/openssl-${OPENSSL_VERSION}.conf \
